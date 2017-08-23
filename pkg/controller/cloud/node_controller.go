@@ -341,6 +341,16 @@ func (cnc *CloudNodeController) AddCloudNode(obj interface{}) {
 		if err != nil {
 			return err
 		}
+
+		glog.V(2).Infof("Recording %s event message for node %s", "RegisteredNode", node.Name)
+		ref := &v1.ObjectReference{
+			Kind:      "Node",
+			Name:      node.Name,
+			UID:       types.UID(node.UID),
+			Namespace: "",
+		}
+		cnc.recorder.Eventf(ref, v1.EventTypeNormal, fmt.Sprintf("Registered Node %v in NodeController", node.Name), "Node %s event: %s", node.Name, "RegisteredNode")
+
 		// After adding, call UpdateNodeAddress to set the CloudProvider provided IPAddresses
 		// So that users do not see any significant delay in IP addresses being filled into the node
 		cnc.updateNodeAddress(curNode, instances)
