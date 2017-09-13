@@ -1305,7 +1305,7 @@ func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate) {
 	// handled by pod workers).
 	go wait.Until(kl.podKiller, 1*time.Second, wait.NeverStop)
 
-	// Start gorouting responsible for checking limits in resolv.conf
+	// Start a goroutine responsible for checking limits in resolv.conf
 	if kl.resolverConfig != "" {
 		go wait.Until(func() { kl.checkLimitsForResolvConf() }, 30*time.Second, wait.NeverStop)
 	}
