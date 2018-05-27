@@ -30,23 +30,32 @@ type PodBindingCache interface {
 	// pod and node.
 	UpdateBindings(pod *v1.Pod, node string, bindings []*bindingInfo)
 
-	// DeleteBindings will remove all cached bindings for the given pod.
-	DeleteBindings(pod *v1.Pod)
-
 	// GetBindings will return the cached bindings for the given pod and node.
 	GetBindings(pod *v1.Pod, node string) []*bindingInfo
+
+
+	// UpdateProvisionedPVCs will update the cache with the given provisioning decisions
+	// for the pod and node.
+	UpdateProvisionedPVCs(pod *v1.Pod, node string, provisionings []*v1.PersistentVolumeClaim)
+
+	// GetProvisionedPVCs will return the cached provisioning decisions for the given pod and node.
+	GetProvisionedPVCs(pod *v1.Pod, node string) []*v1.PersistentVolumeClaim
+
+	// DeleteBindings will remove all cached bindings and provisionings for the given pod.
+	// TODO: separate the func if it is needed to delete bindings/provisionings individually
+	DeleteBinding(pod *v1.Pod)
 }
 
 type podBindingCache struct {
 	mutex sync.Mutex
 
 	// Key = pod name
-	// Value = nodeBindings
-	bindings map[string]nodeBindings
+	// Value = nodeDecisions
+	bindingDecisions map[string]nodeDecisions
 }
 
 // Key = nodeName
-// Value = array of bindingInfo
+// Value = bindings & provisioned PVCs of the node
 type nodeBindings map[string][]*bindingInfo
 
 func NewPodBindingCache() PodBindingCache {
