@@ -115,7 +115,7 @@ func TestValidationJobTemplateResourceUpdate(t *testing.T) {
 	}
 
 	// change qos
-	newQOSSpec := getPodTemplateSpecForResourceUpdate("11Gi", "11Gi", validGeneratedSelector) //GUARENTEE QOS
+	newQOSSpec := getPodTemplateSpecForResourceUpdate("11Gi", "11Gi", validGeneratedSelector) //GUARENTEED QOS
 	newQOSJobSpec := batch.JobSpec{
 		Selector: validGeneratedSelector,
 		Template: newQOSSpec,

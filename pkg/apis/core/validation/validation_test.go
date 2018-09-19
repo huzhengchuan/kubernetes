@@ -8070,6 +8070,36 @@ func TestValidatePodUpdate(t *testing.T) {
 						{
 							Image: "foo:V1",
 							Resources: core.ResourceRequirements{
+								Limits: getResourceLimits("100m", "2Gi"),
+							},
+						},
+					},
+				},
+			},
+			core.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Image: "foo:V2",
+							Resources: core.ResourceRequirements{
+								Limits: getResourceLimits("100m", "3Gi"),
+							},
+						},
+					},
+				},
+			},
+			"",
+			"memory change",
+		},
+		{
+			core.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Image: "foo:V1",
+							Resources: core.ResourceRequirements{
 								Limits: getResourceLimits("100m", "0"),
 							},
 						},
@@ -8089,8 +8119,104 @@ func TestValidatePodUpdate(t *testing.T) {
 					},
 				},
 			},
-			"spec: Forbidden: pod updates may not change fields",
+			"",
 			"cpu change",
+		},
+		{
+			core.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Image: "foo:V1",
+							Resources: core.ResourceRequirements{
+								Limits:   getResourceLimits("100m", "2Gi"),
+								Requests: getResourceLimits("100m", "2Gi"),
+							},
+						},
+					},
+				},
+			},
+			core.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Image: "foo:V2",
+							Resources: core.ResourceRequirements{
+								Limits:   getResourceLimits("1000m", "3Gi"),
+								Requests: getResourceLimits("1000m", "3Gi"),
+							},
+						},
+					},
+				},
+			},
+			"",
+			"cpu and memory requests and limits change",
+		},
+		{
+			core.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Image: "foo:V1",
+							Resources: core.ResourceRequirements{
+								Requests: getResourceLimits("100m", "2Gi"),
+								Limits:   getResourceLimits("100m", "2Gi"),
+							},
+						},
+					},
+				},
+			},
+			core.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Image: "foo:V2",
+							Resources: core.ResourceRequirements{
+								Requests: getResourceLimits("100m", "3Gi"),
+								Limits:   getResourceLimits("100m", "3Gi"),
+							},
+						},
+					},
+				},
+			},
+			"",
+			"qos no change",
+		},
+		{
+			core.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Image: "foo:V1",
+							Resources: core.ResourceRequirements{
+								Requests: getResourceLimits("100m", "2Gi"),
+								Limits:   getResourceLimits("100m", "2Gi"),
+							},
+						},
+					},
+				},
+			},
+			core.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Image: "foo:V2",
+							Resources: core.ResourceRequirements{
+								Requests: getResourceLimits("100m", "3Gi"),
+								Limits:   getResourceLimits("100m", "4Gi"),
+							},
+						},
+					},
+				},
+			},
+			"Pod QOS is immutable",
+			"qos change",
 		},
 		{
 			core.Pod{
