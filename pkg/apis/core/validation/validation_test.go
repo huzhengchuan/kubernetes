@@ -8081,7 +8081,7 @@ func TestValidatePodUpdate(t *testing.T) {
 				Spec: core.PodSpec{
 					Containers: []core.Container{
 						{
-							Image: "foo:V2",
+							Image: "foo:V1",
 							Resources: core.ResourceRequirements{
 								Limits: getResourceLimits("100m", "3Gi"),
 							},
@@ -8111,7 +8111,7 @@ func TestValidatePodUpdate(t *testing.T) {
 				Spec: core.PodSpec{
 					Containers: []core.Container{
 						{
-							Image: "foo:V2",
+							Image: "foo:V1",
 							Resources: core.ResourceRequirements{
 								Limits: getResourceLimits("1000m", "0"),
 							},
@@ -8142,7 +8142,7 @@ func TestValidatePodUpdate(t *testing.T) {
 				Spec: core.PodSpec{
 					Containers: []core.Container{
 						{
-							Image: "foo:V2",
+							Image: "foo:V1",
 							Resources: core.ResourceRequirements{
 								Limits:   getResourceLimits("1000m", "3Gi"),
 								Requests: getResourceLimits("1000m", "3Gi"),
@@ -8174,7 +8174,7 @@ func TestValidatePodUpdate(t *testing.T) {
 				Spec: core.PodSpec{
 					Containers: []core.Container{
 						{
-							Image: "foo:V2",
+							Image: "foo:V1",
 							Resources: core.ResourceRequirements{
 								Requests: getResourceLimits("100m", "3Gi"),
 								Limits:   getResourceLimits("100m", "3Gi"),
@@ -8206,7 +8206,7 @@ func TestValidatePodUpdate(t *testing.T) {
 				Spec: core.PodSpec{
 					Containers: []core.Container{
 						{
-							Image: "foo:V2",
+							Image: "foo:V1",
 							Resources: core.ResourceRequirements{
 								Requests: getResourceLimits("100m", "3Gi"),
 								Limits:   getResourceLimits("100m", "4Gi"),
