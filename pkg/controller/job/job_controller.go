@@ -405,7 +405,7 @@ func mergeResourceChanges(pod *v1.Pod, cMap map[string]*v1.Container) []v1.Conta
 	var resourceUpdates []v1.Container
 
 	// add annotation to pod if request and/or limit from job spec is different
-	for cid, podContainer := range pod.Spec.Containers {
+	for _, podContainer := range pod.Spec.Containers {
 		hasUpdate := false
 		var patch v1.Container
 		jobSpecContainerResource := cMap[podContainer.Name].Resources
@@ -413,14 +413,14 @@ func mergeResourceChanges(pod *v1.Pod, cMap map[string]*v1.Container) []v1.Conta
 		// update request from job spec
 		if !reflect.DeepEqual(podContainer.Resources.Requests, jobSpecContainerResource.Requests) {
 			if podContainer.Resources.Requests == nil {
-				pod.Spec.Containers[cid].Resources.Requests = make(v1.ResourceList)
-			}
-
-			patch.Resources.Requests = make(v1.ResourceList)
-			for name, jobVal := range jobSpecContainerResource.Requests {
-				if podVal, exists := podContainer.Resources.Requests[name]; !exists ||
-					!reflect.DeepEqual(podVal, jobVal) {
-					patch.Resources.Requests[name] = jobVal
+				patch.Resources.Requests = jobSpecContainerResource.Requests.DeepCopy()
+			} else {
+				patch.Resources.Requests = make(v1.ResourceList)
+				for name, jobVal := range jobSpecContainerResource.Requests {
+					if podVal, exists := podContainer.Resources.Requests[name]; !exists ||
+						!reflect.DeepEqual(podVal, jobVal) {
+						patch.Resources.Requests[name] = jobVal
+					}
 				}
 			}
 			hasUpdate = true
@@ -429,14 +429,15 @@ func mergeResourceChanges(pod *v1.Pod, cMap map[string]*v1.Container) []v1.Conta
 		// update limit from job spec
 		if !reflect.DeepEqual(podContainer.Resources.Limits, jobSpecContainerResource.Limits) {
 			if podContainer.Resources.Limits == nil {
-				pod.Spec.Containers[cid].Resources.Limits = make(v1.ResourceList)
-			}
+				patch.Resources.Limits = jobSpecContainerResource.Limits.DeepCopy()
+			} else {
 
-			patch.Resources.Limits = make(v1.ResourceList)
-			for name, jobVal := range jobSpecContainerResource.Limits {
-				if podVal, exists := podContainer.Resources.Limits[name]; !exists ||
-					!reflect.DeepEqual(podVal, jobVal) {
-					patch.Resources.Limits[name] = jobVal
+				patch.Resources.Limits = make(v1.ResourceList)
+				for name, jobVal := range jobSpecContainerResource.Limits {
+					if podVal, exists := podContainer.Resources.Limits[name]; !exists ||
+						!reflect.DeepEqual(podVal, jobVal) {
+						patch.Resources.Limits[name] = jobVal
+					}
 				}
 			}
 			hasUpdate = true
@@ -460,8 +461,8 @@ func (jm *JobController) patchJobResource(j *batch.Job, pods []*v1.Pod) error {
 
 	for _, pod := range pods {
 		resourceUpdates := mergeResourceChanges(pod, cMap)
-		anno := make(map[string]string)
 		if len(resourceUpdates) > 0 {
+			anno := make(map[string]string)
 			jsonStr, _ := json.Marshal(resourceUpdates)
 			anno["vscale"] = string(jsonStr)
 
