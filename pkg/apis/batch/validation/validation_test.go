@@ -20,8 +20,10 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/kubernetes/pkg/apis/batch"
 	api "k8s.io/kubernetes/pkg/apis/core"
 )
@@ -48,6 +50,80 @@ func getValidPodTemplateSpecForManual(selector *metav1.LabelSelector) api.PodTem
 func getValidGeneratedSelector() *metav1.LabelSelector {
 	return &metav1.LabelSelector{
 		MatchLabels: map[string]string{"controller-uid": "1a2b3c", "job-name": "myjob"},
+	}
+}
+
+func getPodTemplateSpecForResourceUpdate(request string, limit string, selector *metav1.LabelSelector) api.PodTemplateSpec {
+
+	rs := new(api.ResourceRequirements)
+	rs.Requests = make(api.ResourceList)
+	rs.Limits = make(api.ResourceList)
+
+	// BURSTABLE QOS, use "memory" to change to GUARENTEED
+	rs.Requests["memory"], _ = resource.ParseQuantity(request)
+	rs.Limits["memory"], _ = resource.ParseQuantity(limit)
+	rs.Requests["cpu"], _ = resource.ParseQuantity("4")
+	rs.Limits["cpu"], _ = resource.ParseQuantity("4")
+
+	return api.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: selector.MatchLabels,
+		},
+		Spec: api.PodSpec{
+			RestartPolicy: api.RestartPolicyOnFailure,
+			DNSPolicy:     api.DNSClusterFirst,
+			Containers:    []api.Container{{Name: "abc", Image: "image", ImagePullPolicy: "IfNotPresent", TerminationMessagePolicy: api.TerminationMessageReadFile, Resources: *rs}},
+		},
+	}
+}
+
+func TestValidationJobTemplateResourceUpdate(t *testing.T) {
+	validGeneratedSelector := getValidGeneratedSelector()
+	oldSpec := getPodTemplateSpecForResourceUpdate("5Gi", "10Gi", validGeneratedSelector)
+	newSpec := getPodTemplateSpecForResourceUpdate("6Gi", "11Gi", validGeneratedSelector)
+	newJobSpec := batch.JobSpec{
+		Selector: validGeneratedSelector,
+		Template: newSpec,
+	}
+
+	cases := map[string]batch.Job{
+		"update resource": {
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "myjob",
+				Namespace: metav1.NamespaceDefault,
+				UID:       types.UID("1a2b3c"),
+			},
+			Spec: batch.JobSpec{
+				Selector: validGeneratedSelector,
+				Template: oldSpec,
+			},
+		},
+	}
+
+	for k, v := range cases {
+		if errs := ValidateJobSpecUpdate(newJobSpec, v.Spec, field.NewPath("spec")); len(errs) != 0 {
+			t.Errorf("expected success for %s: %v", k, errs)
+		}
+	}
+
+	// modifying an immutable field
+	newJobSpec.Template.Spec.Containers[0].Name = "newName"
+	for k, v := range cases {
+		if errs := ValidateJobSpecUpdate(newJobSpec, v.Spec, field.NewPath("spec")); len(errs) == 0 {
+			t.Errorf("expected failure for %s: %v", k, errs)
+		}
+	}
+
+	// change qos
+	newQOSSpec := getPodTemplateSpecForResourceUpdate("11Gi", "11Gi", validGeneratedSelector) //GUARENTEED QOS
+	newQOSJobSpec := batch.JobSpec{
+		Selector: validGeneratedSelector,
+		Template: newQOSSpec,
+	}
+	for k, v := range cases {
+		if errs := ValidateJobSpecUpdate(newQOSJobSpec, v.Spec, field.NewPath("spec")); len(errs) == 0 {
+			t.Errorf("expected failure for %s: %v", k, errs)
+		}
 	}
 }
 
