@@ -17,6 +17,7 @@ limitations under the License.
 package job
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -400,6 +401,84 @@ func (jm *JobController) processNextWorkItem() bool {
 	return true
 }
 
+func mergeResourceChanges(pod *v1.Pod, cMap map[string]*v1.Container) []v1.Container {
+	var resourceUpdates []v1.Container
+
+	// add annotation to pod if request and/or limit from job spec is different
+	for _, podContainer := range pod.Spec.Containers {
+		hasUpdate := false
+		var patch v1.Container
+		jobSpecContainerResource := cMap[podContainer.Name].Resources
+
+		// update request from job spec
+		if !reflect.DeepEqual(podContainer.Resources.Requests, jobSpecContainerResource.Requests) {
+			if podContainer.Resources.Requests == nil {
+				patch.Resources.Requests = jobSpecContainerResource.Requests.DeepCopy()
+			} else {
+				patch.Resources.Requests = make(v1.ResourceList)
+				for name, jobVal := range jobSpecContainerResource.Requests {
+					if podVal, exists := podContainer.Resources.Requests[name]; !exists ||
+						!reflect.DeepEqual(podVal, jobVal) {
+						patch.Resources.Requests[name] = jobVal
+					}
+				}
+			}
+			hasUpdate = true
+		}
+
+		// update limit from job spec
+		if !reflect.DeepEqual(podContainer.Resources.Limits, jobSpecContainerResource.Limits) {
+			if podContainer.Resources.Limits == nil {
+				patch.Resources.Limits = jobSpecContainerResource.Limits.DeepCopy()
+			} else {
+
+				patch.Resources.Limits = make(v1.ResourceList)
+				for name, jobVal := range jobSpecContainerResource.Limits {
+					if podVal, exists := podContainer.Resources.Limits[name]; !exists ||
+						!reflect.DeepEqual(podVal, jobVal) {
+						patch.Resources.Limits[name] = jobVal
+					}
+				}
+			}
+			hasUpdate = true
+		}
+
+		if hasUpdate {
+			patch.Name = podContainer.Name
+			resourceUpdates = append(resourceUpdates, patch)
+		}
+	}
+	return resourceUpdates
+}
+
+func (jm *JobController) patchJobResource(j *batch.Job, pods []*v1.Pod) error {
+	cm := controller.NewPodControllerRefManager(jm.podControl, j, nil, controllerKind, nil)
+
+	cMap := make(map[string]*v1.Container)
+	for i, container := range j.Spec.Template.Spec.Containers {
+		cMap[container.Name] = &(j.Spec.Template.Spec.Containers[i])
+	}
+
+	for _, pod := range pods {
+		resourceUpdates := mergeResourceChanges(pod, cMap)
+		if len(resourceUpdates) > 0 {
+			anno := make(map[string]string)
+			jsonStr, _ := json.Marshal(resourceUpdates)
+			anno["vscale"] = string(jsonStr)
+
+			// only patch new annotation. ignore duplicate
+			if pod.Annotations == nil || pod.Annotations["vscale"] != anno["vscale"] {
+				cm.PatchPodResourceAnnotation(pod, anno)
+				glog.V(6).Infof("Adding resource update annotation %v to pod %s", anno, pod.Name)
+			} else {
+				glog.V(6).Infof("Ignord attempt to patch duplicated annotation %v to pod %s", anno, pod.Name)
+			}
+		}
+	}
+
+	return nil
+}
+
 // getPodsForJob returns the set of pods that this Job should manage.
 // It also reconciles ControllerRef by adopting/orphaning.
 // Note that the returned Pods are pointers into the cache.
@@ -471,6 +550,11 @@ func (jm *JobController) syncJob(key string) (bool, error) {
 	jobNeedsSync := jm.expectations.SatisfiedExpectations(key)
 
 	pods, err := jm.getPodsForJob(&job)
+	if err != nil {
+		return false, err
+	}
+
+	err = jm.patchJobResource(&job, pods)
 	if err != nil {
 		return false, err
 	}

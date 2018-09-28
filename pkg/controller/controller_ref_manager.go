@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -218,6 +219,17 @@ func (m *PodControllerRefManager) AdoptPod(pod *v1.Pod) error {
 		m.controllerKind.GroupVersion(), m.controllerKind.Kind,
 		m.Controller.GetName(), m.Controller.GetUID(), pod.UID)
 	return m.podControl.PatchPod(pod.Namespace, pod.Name, []byte(addControllerPatch))
+}
+
+// PatchPodResourceAnnotation sends a patch to update pod's annotation about resource update
+func (m *PodControllerRefManager) PatchPodResourceAnnotation(pod *v1.Pod, annotations map[string]string) error {
+	jsonStr, err := json.Marshal(annotations)
+	if err != nil {
+		return fmt.Errorf("error marshalling annotations %v/%v (%v): %v", pod.Namespace, pod.Name, pod.UID, err)
+	}
+	patch := fmt.Sprintf(`{"metadata":{"annotations": %s}}`, jsonStr)
+
+	return m.podControl.PatchPod(pod.Namespace, pod.Name, []byte(patch))
 }
 
 // ReleasePod sends a patch to free the pod from the control of the controller.

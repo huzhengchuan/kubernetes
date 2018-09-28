@@ -18,6 +18,7 @@ package job
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 	batch "k8s.io/api/batch/v1"
 	"k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/rand"
@@ -921,6 +923,280 @@ func TestAddPodOrphan(t *testing.T) {
 	jm.addPod(pod1)
 	if got, want := jm.queue.Len(), 2; got != want {
 		t.Fatalf("queue.Len() = %v, want %v", got, want)
+	}
+}
+
+func getResourceRequirements(cpuRequest string, cpuLimit string, memRequest string, memLimit string) v1.ResourceRequirements {
+
+	requirement := v1.ResourceRequirements{}
+	if cpuRequest != "" || memRequest != "" {
+		requirement.Requests = make(v1.ResourceList)
+		if cpuRequest != "" {
+			requirement.Requests["cpu"], _ = resource.ParseQuantity(cpuRequest)
+		}
+		if memRequest != "" {
+			requirement.Requests["memory"], _ = resource.ParseQuantity(memRequest)
+		}
+	}
+
+	if cpuLimit != "" || memLimit != "" {
+		requirement.Limits = make(v1.ResourceList)
+		if cpuLimit != "" {
+			requirement.Limits["cpu"], _ = resource.ParseQuantity(cpuLimit)
+		}
+		if memLimit != "" {
+			requirement.Limits["memory"], _ = resource.ParseQuantity(memLimit)
+		}
+	}
+
+	return requirement
+}
+
+func newContainer(name string, requirement v1.ResourceRequirements) *v1.Container {
+	return &v1.Container{
+		Name:      name,
+		Image:     "image1",
+		Resources: requirement,
+	}
+}
+
+func newPodWithContainers(name string, containers []v1.Container) *v1.Pod {
+	return &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "namespace1",
+		},
+		Spec: v1.PodSpec{
+			Containers: containers,
+		},
+	}
+}
+
+func getContainerResourceMap(names []string, requirements []v1.ResourceRequirements) map[string]*v1.Container {
+
+	cMap := make(map[string]*v1.Container)
+
+	for i, name := range names {
+		cMap[name] = newContainer(name, requirements[i])
+	}
+
+	return cMap
+}
+
+func TestMergeResourceChanges1ContainerNilRequests(t *testing.T) {
+	requirement := getResourceRequirements("", "20", "", "4Gi")
+	cMap := getContainerResourceMap([]string{"c1"}, []v1.ResourceRequirements{requirement})
+	containers := []v1.Container{}
+	for _, v := range cMap {
+		containers = append(containers, *v)
+	}
+	pod := newPodWithContainers("p1", containers)
+
+	cMap["c1"].Resources = getResourceRequirements("10", "20", "3Gi", "4Gi")
+	r := mergeResourceChanges(pod, cMap)
+
+	expected := v1.Container{
+		Name:      "c1",
+		Resources: getResourceRequirements("10", "", "3Gi", ""),
+	}
+
+	if len(r) != 1 || !reflect.DeepEqual(expected, r[0]) {
+		t.Errorf("mergeResourceChanges failed %v, want %v", r, expected)
+	}
+}
+
+func TestMergeResourceChanges1ContainerNilLimits(t *testing.T) {
+	requirement := getResourceRequirements("10", "", "3Gi", "")
+	cMap := getContainerResourceMap([]string{"c1"}, []v1.ResourceRequirements{requirement})
+	containers := []v1.Container{}
+	for _, v := range cMap {
+		containers = append(containers, *v)
+	}
+	pod := newPodWithContainers("p1", containers)
+
+	cMap["c1"].Resources = getResourceRequirements("10", "20", "3Gi", "4Gi")
+	r := mergeResourceChanges(pod, cMap)
+
+	expected := v1.Container{
+		Name:      "c1",
+		Resources: getResourceRequirements("", "20", "", "4Gi"),
+	}
+
+	if len(r) != 1 || !reflect.DeepEqual(expected, r[0]) {
+		t.Errorf("mergeResourceChanges failed %v, want %v", r, expected)
+	}
+}
+
+func TestMergeResourceChanges1ContainerNilRequestsNilLimitsNoChange(t *testing.T) {
+	requirement := getResourceRequirements("", "", "", "")
+	cMap := getContainerResourceMap([]string{"c1"}, []v1.ResourceRequirements{requirement})
+	containers := []v1.Container{}
+	for _, v := range cMap {
+		containers = append(containers, *v)
+	}
+	pod := newPodWithContainers("p1", containers)
+
+	size := len(mergeResourceChanges(pod, cMap))
+	if size != 0 {
+		t.Errorf("mergeResourceChanges failed %v, want %v", size, 0)
+	}
+
+}
+
+func TestMergeResourceChanges1ContainerNoChange(t *testing.T) {
+	requirement := getResourceRequirements("10", "20", "3Gi", "4Gi")
+	cMap := getContainerResourceMap([]string{"c1"}, []v1.ResourceRequirements{requirement})
+	containers := []v1.Container{}
+	for _, v := range cMap {
+		containers = append(containers, *v)
+	}
+	pod := newPodWithContainers("p1", containers)
+
+	size := len(mergeResourceChanges(pod, cMap))
+	if size != 0 {
+		t.Errorf("mergeResourceChanges failed %v, want %v", size, 0)
+	}
+
+}
+
+func TestMergeResourceChanges1Container1ResourceChange(t *testing.T) {
+	requirement := getResourceRequirements("10", "20", "3Gi", "4Gi")
+	cMap := getContainerResourceMap([]string{"c1"}, []v1.ResourceRequirements{requirement})
+	containers := []v1.Container{}
+	for _, v := range cMap {
+		containers = append(containers, *v)
+	}
+	pod := newPodWithContainers("p1", containers)
+
+	cMap["c1"].Resources = getResourceRequirements("10", "20", "5Gi", "6Gi")
+	r := mergeResourceChanges(pod, cMap)
+
+	expected := v1.Container{
+		Name:      "c1",
+		Resources: getResourceRequirements("", "", "5Gi", "6Gi"),
+	}
+
+	if len(r) != 1 || !reflect.DeepEqual(expected, r[0]) {
+		t.Errorf("mergeResourceChanges failed %v, want %v", r, expected)
+	}
+}
+
+func TestMergeResourceChanges1ContainerMultipleResourceChange(t *testing.T) {
+	requirement := getResourceRequirements("10", "20", "3Gi", "4Gi")
+	cMap := getContainerResourceMap([]string{"c1"}, []v1.ResourceRequirements{requirement})
+	containers := []v1.Container{}
+	for _, v := range cMap {
+		containers = append(containers, *v)
+	}
+	pod := newPodWithContainers("p1", containers)
+
+	cMap["c1"].Resources = getResourceRequirements("30", "40", "5Gi", "6Gi")
+	r := mergeResourceChanges(pod, cMap)
+
+	expected := v1.Container{
+		Name:      "c1",
+		Resources: getResourceRequirements("30", "40", "5Gi", "6Gi"),
+	}
+
+	if len(r) != 1 || !reflect.DeepEqual(expected, r[0]) {
+		t.Errorf("mergeResourceChanges failed %v, want %v", r, expected)
+	}
+}
+
+func TestMergeResourceChanges1ContainerRequestChange(t *testing.T) {
+	requirement := getResourceRequirements("10", "20", "3Gi", "4Gi")
+	cMap := getContainerResourceMap([]string{"c1"}, []v1.ResourceRequirements{requirement})
+	containers := []v1.Container{}
+	for _, v := range cMap {
+		containers = append(containers, *v)
+	}
+	pod := newPodWithContainers("p1", containers)
+
+	cMap["c1"].Resources = getResourceRequirements("15", "20", "3.5Gi", "4Gi")
+	r := mergeResourceChanges(pod, cMap)
+
+	expected := v1.Container{
+		Name:      "c1",
+		Resources: getResourceRequirements("15", "", "3.5Gi", ""),
+	}
+
+	if len(r) != 1 || !reflect.DeepEqual(expected, r[0]) {
+		t.Errorf("mergeResourceChanges failed %v, want %v", r, expected)
+	}
+}
+
+func TestMergeResourceChangesMultipleContainerMultipleResourceChange(t *testing.T) {
+	requirement1 := getResourceRequirements("10", "20", "3Gi", "4Gi")
+	requirement2 := getResourceRequirements("50", "60", "7Gi", "8Gi")
+	cMap := getContainerResourceMap([]string{"c1", "c2"}, []v1.ResourceRequirements{requirement1, requirement2})
+	containers := []v1.Container{}
+	for _, v := range cMap {
+		containers = append(containers, *v)
+	}
+	pod := newPodWithContainers("p1", containers)
+
+	cMap["c1"].Resources = getResourceRequirements("30", "40", "5Gi", "6Gi")
+	r := mergeResourceChanges(pod, cMap)
+
+	expected := v1.Container{
+		Name:      "c1",
+		Resources: getResourceRequirements("30", "40", "5Gi", "6Gi"),
+	}
+
+	if len(r) != 1 || !reflect.DeepEqual(expected, r[0]) {
+		t.Errorf("mergeResourceChanges failed %v, want %v", r, expected)
+	}
+}
+
+func TestMergeResourceChangesMultipleContainerMultipleResourceAllChange(t *testing.T) {
+	requirement1 := getResourceRequirements("10", "20", "3Gi", "4Gi")
+	requirement2 := getResourceRequirements("50", "60", "7Gi", "8Gi")
+	cMap := getContainerResourceMap([]string{"c1", "c2"}, []v1.ResourceRequirements{requirement1, requirement2})
+	containers := []v1.Container{}
+	for _, v := range cMap {
+		containers = append(containers, *v)
+	}
+	pod := newPodWithContainers("p1", containers)
+
+	cMap["c1"].Resources = getResourceRequirements("30", "40", "5Gi", "6Gi")
+	cMap["c2"].Resources = getResourceRequirements("5", "6", "70Gi", "80Gi")
+	r := mergeResourceChanges(pod, cMap)
+
+	expected := []v1.Container{
+		v1.Container{
+			Name:      "c1",
+			Resources: getResourceRequirements("30", "40", "5Gi", "6Gi"),
+		},
+		v1.Container{
+			Name:      "c2",
+			Resources: getResourceRequirements("5", "6", "70Gi", "80Gi"),
+		},
+	}
+
+	if len(r) != 2 || !reflect.DeepEqual(expected[0], r[0]) || !reflect.DeepEqual(expected[1], r[1]) {
+		t.Errorf("mergeResourceChanges failed %v, want %v", r, expected)
+	}
+}
+
+func TestMergeResourceChanges1ContainerLimitChange(t *testing.T) {
+	requirement := getResourceRequirements("10", "20", "3Gi", "4Gi")
+	cMap := getContainerResourceMap([]string{"c1"}, []v1.ResourceRequirements{requirement})
+	containers := []v1.Container{}
+	for _, v := range cMap {
+		containers = append(containers, *v)
+	}
+	pod := newPodWithContainers("p1", containers)
+
+	cMap["c1"].Resources = getResourceRequirements("10", "25", "3Gi", "5Gi")
+	r := mergeResourceChanges(pod, cMap)
+
+	expected := v1.Container{
+		Name:      "c1",
+		Resources: getResourceRequirements("", "25", "", "5Gi"),
+	}
+
+	if len(r) != 1 || !reflect.DeepEqual(expected, r[0]) {
+		t.Errorf("mergeResourceChanges failed %v, want %v", r, expected)
 	}
 }
 
