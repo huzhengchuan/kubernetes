@@ -35,6 +35,8 @@ type ResourceConfig struct {
 	HugePageLimit map[int64]int64
 	// Maximum number of pids
 	PodPidsLimit *int64
+	// Configuration of out-of-memory process kill setting for pod
+	OomKillDisable bool
 }
 
 // CgroupName is the abstract name of a cgroup prior to any driver specific conversion.
