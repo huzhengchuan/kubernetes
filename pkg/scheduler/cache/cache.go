@@ -295,19 +295,19 @@ func (cache *schedulerCache) processPodResourcesResizeRequest(newPod *v1.Pod) er
 			nodeMilliCPU := node.RequestedResource().MilliCPU
 			nodeMemory := node.RequestedResource().Memory
 
-			if ((allocatable.MilliCPU > (podResource.MilliCPU + nodeMilliCPU)) &&
-				(allocatable.Memory > (podResource.Memory + nodeMemory))) {
+			if (allocatable.MilliCPU > (podResource.MilliCPU + nodeMilliCPU)) &&
+				(allocatable.Memory > (podResource.Memory + nodeMemory)) {
 				// InPlace resizing is possible
 				for i, container := range newPod.Spec.Containers {
 					resizeContainer, ok := resizeContainersMap[container.Name]
 					if ok {
 						// Validation checks ensure pod QoS invariance, just update changed values
-						if (resizeContainer.Resources.Requests != nil) {
+						if resizeContainer.Resources.Requests != nil {
 							for k, v := range resizeContainer.Resources.Requests {
 								newPod.Spec.Containers[i].Resources.Requests[k] = v
 							}
 						}
-						if (resizeContainer.Resources.Limits != nil) {
+						if resizeContainer.Resources.Limits != nil {
 							for k, v := range resizeContainer.Resources.Limits {
 								newPod.Spec.Containers[i].Resources.Limits[k] = v
 							}
@@ -320,8 +320,8 @@ func (cache *schedulerCache) processPodResourcesResizeRequest(newPod *v1.Pod) er
 				if resizeResourcesPolicy == api.ResizePolicyInPlaceOnly {
 					newPod.ObjectMeta.Annotations[api.AnnotationResizeResources] = api.ResizeActionNonePerPolicy
 					glog.V(4).Infof("In-place resizing of pod %s on node %s rejected by policy (%s). Allocatable CPU: %d, Memory: %d. Requested: CPU: %d, Memory %d.",
-							newPod.Name, newPod.Spec.NodeName, resizeResourcesPolicy, allocatable.MilliCPU, allocatable.Memory,
-							podResource.MilliCPU, podResource.Memory)
+						newPod.Name, newPod.Spec.NodeName, resizeResourcesPolicy, allocatable.MilliCPU, allocatable.Memory,
+						podResource.MilliCPU, podResource.Memory)
 					return nil
 				}
 				newPod.ObjectMeta.Annotations[api.AnnotationResizeResources] = api.ResizeActionReschedule
@@ -341,7 +341,8 @@ func (cache *schedulerCache) updatePod(oldPod, newPod *v1.Pod) error {
 		return err
 	}
 	// Resize request is valid for running pods
-	if (oldPod.Status.Phase == v1.PodRunning && newPod.Status.Phase == v1.PodRunning) {
+	if utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) &&
+		oldPod.Status.Phase == v1.PodRunning && newPod.Status.Phase == v1.PodRunning {
 		err = cache.processPodResourcesResizeRequest(newPod)
 	}
 	cache.addPod(newPod)
