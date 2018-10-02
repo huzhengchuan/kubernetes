@@ -557,7 +557,7 @@ func (jm *JobController) syncJob(key string) (bool, error) {
 		return false, err
 	}
 
-	if utilfeature.DefaultFeatureGate.Enabled(features.JobVerticalScaling) {
+	if utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) {
 		err = jm.patchJobResource(&job, pods)
 		if err != nil {
 			return false, err

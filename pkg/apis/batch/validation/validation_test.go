@@ -89,7 +89,7 @@ func TestValidationJobTemplateResourceUpdate(t *testing.T) {
 		Template: newSpec,
 	}
 
-	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.JobVerticalScaling, true)
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, true)
 
 	cases := map[string]batch.Job{
 		"update resource": {
@@ -132,7 +132,7 @@ func TestValidationJobTemplateResourceUpdate(t *testing.T) {
 	}
 
 	// unset feature gate for other tests
-	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.JobVerticalScaling, false)
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, false)
 }
 
 func getValidPodTemplateSpecForGenerated(selector *metav1.LabelSelector) api.PodTemplateSpec {

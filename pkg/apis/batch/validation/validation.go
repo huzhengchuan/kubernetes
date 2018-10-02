@@ -156,7 +156,7 @@ func ValidateJobSpecUpdate(spec, oldSpec batch.JobSpec, fldPath *field.Path) fie
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(spec.Completions, oldSpec.Completions, fldPath.Child("completions"))...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(spec.Selector, oldSpec.Selector, fldPath.Child("selector"))...)
 
-	if !utilfeature.DefaultFeatureGate.Enabled(features.JobVerticalScaling) {
+	if !utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) {
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(spec.Template, oldSpec.Template, fldPath.Child("template"))...)
 		return allErrs
 	}

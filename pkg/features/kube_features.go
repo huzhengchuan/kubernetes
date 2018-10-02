@@ -321,7 +321,7 @@ const (
 	// alpha: v1.11
 	//
 	// Allow job veritical scaling
-	JobVerticalScaling utilfeature.Feature = "JobVerticalScaling"
+	VerticalScaling utilfeature.Feature = "VerticalScaling"
 
 	// owner: @vikaschoudhary16
 	// alpha: v1.11
@@ -408,7 +408,7 @@ var defaultKubernetesFeatureGates = map[utilfeature.Feature]utilfeature.FeatureS
 	DynamicProvisioningScheduling:               {Default: false, PreRelease: utilfeature.Alpha},
 	PodReadinessGates:                           {Default: false, PreRelease: utilfeature.Beta},
 	VolumeSubpathEnvExpansion:                   {Default: false, PreRelease: utilfeature.Alpha},
-	JobVerticalScaling:                          {Default: false, PreRelease: utilfeature.Alpha},
+	VerticalScaling:                          {Default: false, PreRelease: utilfeature.Alpha},
 	KubeletPluginsWatcher:                       {Default: false, PreRelease: utilfeature.Alpha},
 	ResourceQuotaScopeSelectors:                 {Default: false, PreRelease: utilfeature.Alpha},
 	CSIBlockVolume:                              {Default: false, PreRelease: utilfeature.Alpha},

@@ -7822,7 +7822,7 @@ func TestValidatePodResourceUpdate(t *testing.T) {
 		},
 	}
 
-	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.JobVerticalScaling, true)
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, true)
 	for _, test := range tests {
 		test.new.ObjectMeta.ResourceVersion = "1"
 		test.old.ObjectMeta.ResourceVersion = "1"
@@ -7841,7 +7841,7 @@ func TestValidatePodResourceUpdate(t *testing.T) {
 	}
 
 	// unset feature gate for the other tests
-	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.JobVerticalScaling, false)
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, false)
 }
 
 func TestValidatePodUpdate(t *testing.T) {

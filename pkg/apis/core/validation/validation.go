@@ -3487,7 +3487,7 @@ func ValidatePodUpdate(newPod, oldPod *core.Pod) field.ErrorList {
 	var newContainers []core.Container
 	for ix, container := range mungedPod.Spec.Containers {
 		container.Image = oldPod.Spec.Containers[ix].Image
-		if utilfeature.DefaultFeatureGate.Enabled(features.JobVerticalScaling) {
+		if utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) {
 			container.Resources = oldPod.Spec.Containers[ix].Resources
 		}
 		newContainers = append(newContainers, container)
