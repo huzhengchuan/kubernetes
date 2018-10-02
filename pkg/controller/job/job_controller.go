@@ -44,6 +44,7 @@ import (
 	"k8s.io/client-go/util/integer"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/kubernetes/pkg/controller"
+	schedulerapi "k8s.io/kubernetes/pkg/scheduler/api"
 	"k8s.io/kubernetes/pkg/util/metrics"
 
 	"github.com/golang/glog"
@@ -464,10 +465,10 @@ func (jm *JobController) patchJobResource(j *batch.Job, pods []*v1.Pod) error {
 		if len(resourceUpdates) > 0 {
 			anno := make(map[string]string)
 			jsonStr, _ := json.Marshal(resourceUpdates)
-			anno["vscale"] = string(jsonStr)
+			anno[schedulerapi.AnnotationResizeResources] = string(jsonStr)
 
 			// only patch new annotation. ignore duplicate
-			if pod.Annotations == nil || pod.Annotations["vscale"] != anno["vscale"] {
+			if pod.Annotations == nil || pod.Annotations[schedulerapi.AnnotationResizeResources] != anno[schedulerapi.AnnotationResizeResources] {
 				cm.PatchPodResourceAnnotation(pod, anno)
 				glog.V(6).Infof("Adding resource update annotation %v to pod %s", anno, pod.Name)
 			} else {
