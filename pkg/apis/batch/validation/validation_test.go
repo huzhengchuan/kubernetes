@@ -24,8 +24,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	utilfeaturetesting "k8s.io/apiserver/pkg/util/feature/testing"
 	"k8s.io/kubernetes/pkg/apis/batch"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/features"
 )
 
 func getValidManualSelector() *metav1.LabelSelector {
@@ -86,6 +89,8 @@ func TestValidationJobTemplateResourceUpdate(t *testing.T) {
 		Template: newSpec,
 	}
 
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, true)
+
 	cases := map[string]batch.Job{
 		"update resource": {
 			ObjectMeta: metav1.ObjectMeta{
@@ -125,6 +130,9 @@ func TestValidationJobTemplateResourceUpdate(t *testing.T) {
 			t.Errorf("expected failure for %s: %v", k, errs)
 		}
 	}
+
+	// unset feature gate for other tests
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, false)
 }
 
 func getValidPodTemplateSpecForGenerated(selector *metav1.LabelSelector) api.PodTemplateSpec {

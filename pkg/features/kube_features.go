@@ -317,6 +317,16 @@ const (
 	// Extend the default scheduler to be aware of volume topology and handle PV provisioning
 	DynamicProvisioningScheduling utilfeature.Feature = "DynamicProvisioningScheduling"
 
+	// owner: @XiaoningDing
+	// alpha: v1.11
+	//
+	// Allow job veritical scaling
+	VerticalScaling utilfeature.Feature = "VerticalScaling"
+
+	// owner: @vikaschoudhary16
+	// alpha: v1.11
+	//
+	//
 	// owner: @kevtaylor
 	// alpha: v1.11
 	//
@@ -398,6 +408,7 @@ var defaultKubernetesFeatureGates = map[utilfeature.Feature]utilfeature.FeatureS
 	DynamicProvisioningScheduling:               {Default: false, PreRelease: utilfeature.Alpha},
 	PodReadinessGates:                           {Default: false, PreRelease: utilfeature.Beta},
 	VolumeSubpathEnvExpansion:                   {Default: false, PreRelease: utilfeature.Alpha},
+	VerticalScaling:                          {Default: false, PreRelease: utilfeature.Alpha},
 	KubeletPluginsWatcher:                       {Default: false, PreRelease: utilfeature.Alpha},
 	ResourceQuotaScopeSelectors:                 {Default: false, PreRelease: utilfeature.Alpha},
 	CSIBlockVolume:                              {Default: false, PreRelease: utilfeature.Alpha},
