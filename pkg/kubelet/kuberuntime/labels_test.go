@@ -24,6 +24,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	utilfeaturetesting "k8s.io/apiserver/pkg/util/feature/testing"
+	"k8s.io/kubernetes/pkg/features"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 )
 
@@ -156,6 +158,7 @@ func TestContainerAnnotations(t *testing.T) {
 	restartCount := 5
 	deletionGracePeriod := int64(10)
 	terminationGracePeriod := int64(10)
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, true)
 	opts := &kubecontainer.RunContainerOptions{
 		Annotations: []kubecontainer.Annotation{
 			{Name: "Foo", Value: "bar"},
@@ -214,11 +217,11 @@ func TestContainerAnnotations(t *testing.T) {
 		ContainerPorts:            containerPorts,
 		PodDeletionGracePeriod:    pod.DeletionGracePeriodSeconds,
 		PodTerminationGracePeriod: pod.Spec.TerminationGracePeriodSeconds,
-		Hash:                      kubecontainer.HashContainer(container),
-		HashZeroResources:         kubecontainer.HashContainerZeroResources(container),
-		RestartCount:              restartCount,
-		TerminationMessagePath:    container.TerminationMessagePath,
-		PreStopHandler:            container.Lifecycle.PreStop,
+		Hash:                   kubecontainer.HashContainer(container),
+		HashZeroResources:      kubecontainer.HashContainerZeroResources(container),
+		RestartCount:           restartCount,
+		TerminationMessagePath: container.TerminationMessagePath,
+		PreStopHandler:         container.Lifecycle.PreStop,
 	}
 
 	// Test whether we can get right information from label

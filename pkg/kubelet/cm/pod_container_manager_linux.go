@@ -84,11 +84,13 @@ func (m *podContainerManagerImpl) EnsureExists(pod *v1.Pod) error {
 		containerConfig.ResourceParameters.PodPidsLimit = &m.podPidsLimit
 	}
 
-	// parse oomKillDisable flag
-	oomKillDisable := pod.ObjectMeta.Annotations[oomKillDisableAnnotation]
-	containerConfig.ResourceParameters.OomKillDisable = false
-	if oomKillDisable == "true" {
-		containerConfig.ResourceParameters.OomKillDisable = true
+	if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.VerticalScaling) {
+		// parse oomKillDisable flag
+		oomKillDisable := pod.ObjectMeta.Annotations[oomKillDisableAnnotation]
+		containerConfig.ResourceParameters.OomKillDisable = false
+		if oomKillDisable == "true" {
+			containerConfig.ResourceParameters.OomKillDisable = true
+		}
 	}
 
 	// check if container already exist
@@ -98,7 +100,7 @@ func (m *podContainerManagerImpl) EnsureExists(pod *v1.Pod) error {
 		if err := m.cgroupManager.Create(containerConfig); err != nil {
 			return fmt.Errorf("failed to create container for %v : %v", podContainerName, err)
 		}
-	} else {
+	} else if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.VerticalScaling) {
 		// Update the pod container cgroup
 		if err := m.cgroupManager.Update(containerConfig); err != nil {
 			return fmt.Errorf("failed to update container for %v : %v", podContainerName, err)
