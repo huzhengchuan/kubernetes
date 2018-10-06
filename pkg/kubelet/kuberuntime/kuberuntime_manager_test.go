@@ -31,8 +31,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	utilfeaturetesting "k8s.io/apiserver/pkg/util/feature/testing"
 	"k8s.io/client-go/util/flowcontrol"
 	"k8s.io/kubernetes/pkg/credentialprovider"
+	"k8s.io/kubernetes/pkg/features"
 	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
 	apitest "k8s.io/kubernetes/pkg/kubelet/apis/cri/testing"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
@@ -728,8 +731,8 @@ func makeBasePodAndStatus() (*v1.Pod, *kubecontainer.PodStatus) {
 				{
 					Name:  "foo2",
 					Image: "busybox",
-					Resources: v1.ResourceRequirements {
-						Requests: v1.ResourceList {
+					Resources: v1.ResourceRequirements{
+						Requests: v1.ResourceList{
 							v1.ResourceCPU:    resource.MustParse("1000m"),
 							v1.ResourceMemory: resource.MustParse("2000m"),
 						},
@@ -763,7 +766,7 @@ func makeBasePodAndStatus() (*v1.Pod, *kubecontainer.PodStatus) {
 			{
 				ID:   kubecontainer.ContainerID{ID: "id2"},
 				Name: "foo2", State: kubecontainer.ContainerStateRunning,
-				Hash: kubecontainer.HashContainer(&pod.Spec.Containers[1]),
+				Hash:              kubecontainer.HashContainer(&pod.Spec.Containers[1]),
 				HashZeroResources: kubecontainer.HashContainerZeroResources(&pod.Spec.Containers[1]),
 			},
 			{
@@ -779,6 +782,8 @@ func makeBasePodAndStatus() (*v1.Pod, *kubecontainer.PodStatus) {
 func TestComputePodActions(t *testing.T) {
 	_, _, m, err := createTestRuntimeManager()
 	require.NoError(t, err)
+
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, true)
 
 	// Createing a pair reference pod and status for the test cases to refer
 	// the specific fields.
@@ -987,6 +992,7 @@ func verifyActions(t *testing.T, expected, actual *podActions, desc string) {
 func TestComputePodActionsWithInitContainers(t *testing.T) {
 	_, _, m, err := createTestRuntimeManager()
 	require.NoError(t, err)
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, true)
 
 	// Createing a pair reference pod and status for the test cases to refer
 	// the specific fields.

@@ -29,11 +29,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubetypes "k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/tools/record"
 	ref "k8s.io/client-go/tools/reference"
 	"k8s.io/client-go/util/flowcontrol"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/credentialprovider"
+	"k8s.io/kubernetes/pkg/features"
 	internalapi "k8s.io/kubernetes/pkg/kubelet/apis/cri"
 	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
@@ -524,7 +526,8 @@ func (m *kubeGenericRuntimeManager) computePodActions(pod *v1.Pod, podStatus *ku
 		reason := ""
 		restart := shouldRestartOnFailure(pod)
 		if expectedHash, actualHash, changed := containerChanged(&container, containerStatus); changed {
-			if kubecontainer.HashContainerZeroResources(&container) == containerStatus.HashZeroResources {
+			if utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) &&
+				kubecontainer.HashContainerZeroResources(&container) == containerStatus.HashZeroResources {
 				// Only the ResourceRequirement has changed. Update container, don't restart it.
 				reason = fmt.Sprintf("Container resource requirements has changed.")
 				changes.ContainersToUpdate[containerStatus.ID] = containerToUpdateOrKillInfo{
@@ -754,10 +757,12 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, _ v1.PodStatus, podStat
 	}
 
 	// Step 7: For containers in podContainerChanges.ContainersToUpdate list, invoke UpdateContainerResources
-	for containerID, containerInfo := range podContainerChanges.ContainersToUpdate {
-		if err := m.updateContainerResources(pod, containerID, containerInfo.name, containerInfo.container.Resources); err != nil {
-			glog.Errorf("updateContainerResources %q(id=%q) for pod %q failed: %v", containerInfo.name, containerID, format.Pod(pod), err)
-			return
+	if utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) {
+		for containerID, containerInfo := range podContainerChanges.ContainersToUpdate {
+			if err := m.updateContainerResources(pod, containerID, containerInfo.name, containerInfo.container.Resources); err != nil {
+				glog.Errorf("updateContainerResources %q(id=%q) for pod %q failed: %v", containerInfo.name, containerID, format.Pod(pod), err)
+				return
+			}
 		}
 	}
 
