@@ -2071,8 +2071,10 @@ func (kl *Kubelet) HandlePodUpdates(pods []*v1.Pod) {
 	start := kl.clock.Now()
 	for _, pod := range pods {
 		// For non-delete pod updates, check that resource update, if any, is acceptable
-		if pod.ObjectMeta.DeletionTimestamp == nil && !kl.isPodResourceUpdateAcceptable(pod) {
-			continue
+		if utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) {
+			if pod.ObjectMeta.DeletionTimestamp == nil && !kl.isPodResourceUpdateAcceptable(pod) {
+				continue
+			}
 		}
 
 		kl.podManager.UpdatePod(pod)
