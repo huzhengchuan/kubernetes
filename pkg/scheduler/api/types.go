@@ -38,7 +38,7 @@ const (
 	MaxWeight = MaxInt / MaxPriority
 )
 
-// Annotations used for vertical resources scaling/resizing policy, request, action, and restore
+// Annotations used for vertical resources resizing policy, request, action, and restore
 const (
 	AnnotationResizeResourcesPolicy    = "scheduler.alpha.kubernetes.io/resize-resources-policy"
 	AnnotationResizeResourcesRequest   = "scheduler.alpha.kubernetes.io/resize-resources-request"
