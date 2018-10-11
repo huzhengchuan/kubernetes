@@ -538,7 +538,6 @@ func (e *quotaEvaluator) checkRequest(quotas []api.ResourceQuota, a admission.At
 
 		hardResources := quota.ResourceNames(resourceQuota.Status.Hard)
 		requestedUsage := quota.Mask(deltaUsage, hardResources)
-		glog.Infof("xxxxxx %+v", deltaUsage)
 		newUsage := quota.Add(resourceQuota.Status.Used, requestedUsage)
 		maskedNewUsage := quota.Mask(newUsage, quota.ResourceNames(requestedUsage))
 
