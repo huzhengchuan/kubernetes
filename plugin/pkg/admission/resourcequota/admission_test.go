@@ -197,8 +197,7 @@ func TestAdmissionIgnoresSubresources(t *testing.T) {
 	}
 }
 
-// TestAdmitBelowQuotaLimit verifies that a pod when created has its usage reflected on the quota
-func TestAdmitBelowQuotaLimit(t *testing.T) {
+func SetupQuotaforCreateAndUpdate() (*fake.Clientset, *QuotaAdmission, chan struct{}) {
 	resourceQuota := &api.ResourceQuota{
 		ObjectMeta: metav1.ObjectMeta{Name: "quota", Namespace: "test", ResourceVersion: "124"},
 		Status: api.ResourceQuotaStatus{
@@ -215,7 +214,6 @@ func TestAdmitBelowQuotaLimit(t *testing.T) {
 		},
 	}
 	stopCh := make(chan struct{})
-	defer close(stopCh)
 
 	kubeClient := fake.NewSimpleClientset(resourceQuota)
 	informerFactory := informers.NewSharedInformerFactory(kubeClient, controller.NoResyncPeriodFunc())
@@ -231,6 +229,71 @@ func TestAdmitBelowQuotaLimit(t *testing.T) {
 		evaluator: evaluator,
 	}
 	informerFactory.Core().InternalVersion().ResourceQuotas().Informer().GetIndexer().Add(resourceQuota)
+
+	return kubeClient, handler, stopCh
+}
+
+func TestAdmitBelowQuotaLimitWithUpdate(t *testing.T) {
+	kubeClient, handler, stopCh := SetupQuotaforCreateAndUpdate()
+	defer close(stopCh)
+	oldPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("100m", "2Gi"), getResourceList("", "")))
+	err := handler.Validate(admission.NewAttributesRecord(oldPod, nil, api.Kind("Pod").WithVersion("version"), oldPod.Namespace, oldPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Create, nil))
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	newPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("200m", "3Gi"), getResourceList("", "")))
+	err = handler.Validate(admission.NewAttributesRecord(newPod, oldPod, api.Kind("Pod").WithVersion("version"), newPod.Namespace, newPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Update, nil))
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	decimatedActions := removeListWatch(kubeClient.Actions())
+	lastActionIndex := len(decimatedActions) - 1
+	usage := decimatedActions[lastActionIndex].(testcore.UpdateAction).GetObject().(*api.ResourceQuota)
+	expectedUsage := api.ResourceQuota{
+		Status: api.ResourceQuotaStatus{
+			Hard: api.ResourceList{
+				api.ResourceCPU:    resource.MustParse("3"),
+				api.ResourceMemory: resource.MustParse("100Gi"),
+				api.ResourcePods:   resource.MustParse("5"),
+			},
+			Used: api.ResourceList{
+				api.ResourceCPU:    resource.MustParse("1200m"),
+				api.ResourceMemory: resource.MustParse("53Gi"),
+				api.ResourcePods:   resource.MustParse("4"),
+			},
+		},
+	}
+	for k, v := range expectedUsage.Status.Used {
+		actual := usage.Status.Used[k]
+		actualValue := actual.String()
+		expectedValue := v.String()
+		if expectedValue != actualValue {
+			t.Errorf("Usage Used: Key: %v, Expected: %v, Actual: %v", k, expectedValue, actualValue)
+		}
+	}
+}
+
+func TestAdmitExceedsQuotaLimitWithUpdate(t *testing.T) {
+	_, handler, stopCh := SetupQuotaforCreateAndUpdate()
+	defer close(stopCh)
+	oldPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("100m", "2Gi"), getResourceList("", "")))
+	err := handler.Validate(admission.NewAttributesRecord(oldPod, nil, api.Kind("Pod").WithVersion("version"), oldPod.Namespace, oldPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Create, nil))
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	newPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("200m", "100Gi"), getResourceList("", "")))
+	err = handler.Validate(admission.NewAttributesRecord(newPod, oldPod, api.Kind("Pod").WithVersion("version"), newPod.Namespace, newPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Update, nil))
+	if err == nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+}
+
+// TestAdmitBelowQuotaLimit verifies that a pod when created has its usage reflected on the quota
+func TestAdmitBelowQuotaLimit(t *testing.T) {
+	kubeClient, handler, stopCh := SetupQuotaforCreateAndUpdate()
+	defer close(stopCh)
 	newPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("100m", "2Gi"), getResourceList("", "")))
 	err := handler.Validate(admission.NewAttributesRecord(newPod, nil, api.Kind("Pod").WithVersion("version"), newPod.Namespace, newPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Create, nil))
 	if err != nil {

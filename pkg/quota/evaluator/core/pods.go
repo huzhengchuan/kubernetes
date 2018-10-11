@@ -147,7 +147,7 @@ func (p *podEvaluator) GroupResource() schema.GroupResource {
 // Handles returns true if the evaluator should handle the specified attributes.
 func (p *podEvaluator) Handles(a admission.Attributes) bool {
 	op := a.GetOperation()
-	if op == admission.Create {
+	if op == admission.Create || op == admission.Update {
 		return true
 	}
 	initializationCompletion, err := util.IsInitializationCompletion(a)

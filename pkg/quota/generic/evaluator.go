@@ -189,7 +189,7 @@ func (o *objectCountEvaluator) Constraints(required []api.ResourceName, item run
 // Handles returns true if the object count evaluator needs to track this attributes.
 func (o *objectCountEvaluator) Handles(a admission.Attributes) bool {
 	operation := a.GetOperation()
-	return operation == admission.Create || (o.allowCreateOnUpdate && operation == admission.Update)
+	return operation == admission.Create || operation == admission.Update
 }
 
 // Matches returns true if the evaluator matches the specified quota with the provided input item
