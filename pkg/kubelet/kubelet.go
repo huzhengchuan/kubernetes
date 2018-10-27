@@ -1581,6 +1581,9 @@ func (kl *Kubelet) syncPod(o syncPodOptions) error {
 					kl.recorder.Eventf(pod, v1.EventTypeWarning, events.FailedToCreatePodContainer, "unable to ensure pod container exists: %v", err)
 					return fmt.Errorf("failed to ensure that the pod: %v cgroups exist and are correctly applied: %v", pod.UID, err)
 				}
+				if err := kl.containerManager.UpdateQOSCgroups(); err != nil {
+					glog.V(2).Infof("Failed to update QoS cgroups while syncing pod: %v", err)
+				}
 			}
 		}
 	}
