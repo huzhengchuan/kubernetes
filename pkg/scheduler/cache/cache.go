@@ -418,7 +418,6 @@ func (cache *schedulerCache) processPodResourcesScaling(oldPod, newPod *v1.Pod) 
 			allocatable := node.AllocatableResource()
 			nodeMilliCPU := node.RequestedResource().MilliCPU
 			nodeMemory := node.RequestedResource().Memory
-//allocatable.MilliCPU = 20000
 			if (allocatable.MilliCPU > (podResource.MilliCPU + nodeMilliCPU)) &&
 				(allocatable.Memory > (podResource.Memory + nodeMemory)) {
 				// InPlace resizing is possible
