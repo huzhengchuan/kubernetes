@@ -24,9 +24,12 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	apimachineryvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/kubernetes/pkg/apis/batch"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/apis/core/helper/qos"
 	apivalidation "k8s.io/kubernetes/pkg/apis/core/validation"
+	"k8s.io/kubernetes/pkg/features"
 )
 
 // TODO: generalize for other controller objects that will follow the same pattern, such as ReplicaSet and DaemonSet, and
@@ -152,7 +155,46 @@ func ValidateJobSpecUpdate(spec, oldSpec batch.JobSpec, fldPath *field.Path) fie
 	allErrs = append(allErrs, ValidateJobSpec(&spec, fldPath)...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(spec.Completions, oldSpec.Completions, fldPath.Child("completions"))...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(spec.Selector, oldSpec.Selector, fldPath.Child("selector"))...)
-	allErrs = append(allErrs, apivalidation.ValidateImmutableField(spec.Template, oldSpec.Template, fldPath.Child("template"))...)
+
+	if !utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) {
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(spec.Template, oldSpec.Template, fldPath.Child("template"))...)
+		return allErrs
+	}
+
+	// Validate immutable fields in job template
+	// Allowing PodSpec.Container.ResourceRequirements to change
+	newTemplate := spec.Template.DeepCopy()
+	oldTemplate := oldSpec.Template.DeepCopy()
+	resource := new(api.ResourceRequirements)
+	for i, _ := range newTemplate.Spec.Containers {
+		newTemplate.Spec.Containers[i].Resources = *resource
+	}
+	for i, _ := range oldTemplate.Spec.Containers {
+		oldTemplate.Spec.Containers[i].Resources = *resource
+	}
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(newTemplate, oldTemplate, fldPath.Child("template"))...)
+	allErrs = append(allErrs, ValidateJobQOSImmutable(spec, oldSpec, fldPath.Child("template"))...)
+
+	return allErrs
+}
+
+func ValidateJobQOSImmutable(spec, oldSpec batch.JobSpec, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	oldPod := api.Pod{
+		Spec: oldSpec.Template.Spec,
+	}
+	oldQOS := qos.GetPodQOS(&oldPod)
+
+	newPod := api.Pod{
+		Spec: spec.Template.Spec,
+	}
+	newQOS := qos.GetPodQOS(&newPod)
+
+	if newQOS != oldQOS {
+		allErrs = append(allErrs, field.Invalid(fldPath, newQOS, "Pod QOS is immutable"))
+	}
+
 	return allErrs
 }
 

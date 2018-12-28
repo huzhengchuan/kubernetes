@@ -426,6 +426,10 @@ func (m *cgroupManagerImpl) Update(cgroupConfig *CgroupConfig) error {
 		libcontainerCgroupConfig.PidsLimit = *cgroupConfig.ResourceParameters.PodPidsLimit
 	}
 
+	if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.VerticalScaling) {
+		libcontainerCgroupConfig.Resources.OomKillDisable = cgroupConfig.ResourceParameters.OomKillDisable
+	}
+
 	if err := setSupportedSubsystems(libcontainerCgroupConfig); err != nil {
 		return fmt.Errorf("failed to set supported cgroup subsystems for cgroup %v: %v", cgroupConfig.Name, err)
 	}

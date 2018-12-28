@@ -24,6 +24,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	utilfeaturetesting "k8s.io/apiserver/pkg/util/feature/testing"
+	"k8s.io/kubernetes/pkg/features"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 )
 
@@ -156,6 +158,7 @@ func TestContainerAnnotations(t *testing.T) {
 	restartCount := 5
 	deletionGracePeriod := int64(10)
 	terminationGracePeriod := int64(10)
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, true)
 	opts := &kubecontainer.RunContainerOptions{
 		Annotations: []kubecontainer.Annotation{
 			{Name: "Foo", Value: "bar"},
@@ -215,6 +218,7 @@ func TestContainerAnnotations(t *testing.T) {
 		PodDeletionGracePeriod:    pod.DeletionGracePeriodSeconds,
 		PodTerminationGracePeriod: pod.Spec.TerminationGracePeriodSeconds,
 		Hash:                   kubecontainer.HashContainer(container),
+		HashZeroResources:      kubecontainer.HashContainerZeroResources(container),
 		RestartCount:           restartCount,
 		TerminationMessagePath: container.TerminationMessagePath,
 		PreStopHandler:         container.Lifecycle.PreStop,
@@ -224,7 +228,7 @@ func TestContainerAnnotations(t *testing.T) {
 	annotations := newContainerAnnotations(container, pod, restartCount, opts)
 	containerInfo := getContainerInfoFromAnnotations(annotations)
 	if !reflect.DeepEqual(containerInfo, expected) {
-		t.Errorf("expected %v, got %v", expected, containerInfo)
+		t.Errorf("expected %#v, got %#v", expected, containerInfo)
 	}
 	if v, ok := annotations[opts.Annotations[0].Name]; !ok || v != opts.Annotations[0].Value {
 		t.Errorf("expected annotation %s to exist got %v, %v", opts.Annotations[0].Name, ok, v)
@@ -240,10 +244,11 @@ func TestContainerAnnotations(t *testing.T) {
 	expected.PreStopHandler = nil
 	// Because container is changed, the Hash should be updated
 	expected.Hash = kubecontainer.HashContainer(container)
+	expected.HashZeroResources = kubecontainer.HashContainerZeroResources(container)
 	annotations = newContainerAnnotations(container, pod, restartCount, opts)
 	containerInfo = getContainerInfoFromAnnotations(annotations)
 	if !reflect.DeepEqual(containerInfo, expected) {
-		t.Errorf("expected %v, got %v", expected, containerInfo)
+		t.Errorf("expected %#v, got %#v", expected, containerInfo)
 	}
 	if v, ok := annotations[opts.Annotations[0].Name]; !ok || v != opts.Annotations[0].Value {
 		t.Errorf("expected annotation %s to exist got %v, %v", opts.Annotations[0].Name, ok, v)

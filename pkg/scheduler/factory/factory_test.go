@@ -32,8 +32,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
 	utiltesting "k8s.io/client-go/util/testing"
 	apitesting "k8s.io/kubernetes/pkg/api/testing"
 	"k8s.io/kubernetes/pkg/scheduler"
@@ -519,6 +521,143 @@ func TestSkipPodUpdate(t *testing.T) {
 	}
 }
 
+func TestProcessPodResizeAction(t *testing.T) {
+	podName := "test"
+	actionVer := "456"
+	oldPod := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            "test",
+				ResourceVersion: "123",
+			},
+		}
+	newPod := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            podName,
+				ResourceVersion: actionVer,
+			},
+		}
+	newPod.Annotations = make(map[string]string)
+
+	fakeClientset := fake.NewSimpleClientset(&v1.PodList{Items: []v1.Pod{*newPod}})
+	fakeRecorder := record.NewFakeRecorder(32)
+	fakeCf := &configFactory{
+				client:   fakeClientset,
+				recorder: fakeRecorder,
+			}
+
+	tests := []struct {
+		TestCaseDesc            string
+		PodResizeAction         string
+		ExpectedResizeActionVer string
+		ExpectedResizeAction    string
+		ExpectedPodAction       string
+		ExpectedPodEvents       []string
+	}{
+		{
+			"Test ResizeActionUpdateDone",
+			string(schedulerapi.ResizeActionUpdateDone),
+			"",
+			"",
+			"update",
+			[]string{
+				"Normal ResizeRequestComplete Pod resize resources request handling complete",
+			},
+		},
+		{
+			"Test ResizeActionUpdate",
+			string(schedulerapi.ResizeActionUpdate),
+			actionVer,
+			"UpdatePodForResizing",
+			"update",
+			[]string{
+				"Normal ResizeActionUpdate Updating pod to resize resources",
+			},
+		},
+		{
+			"Test ResizeActionNonePerPolicy",
+			string(schedulerapi.ResizeActionNonePerPolicy),
+			actionVer,
+			"PodNotResizedDueToPolicy",
+			"update",
+			[]string{
+				"Normal ResizeBlockedByPolicy Pod not rescheduled for resizing resources due to policy",
+			},
+		},
+		{
+			"Test ResizeActionNonePerPDBViolation",
+			string(schedulerapi.ResizeActionNonePerPDBViolation),
+			actionVer,
+			"PodNotResizedDueToPDBViolation",
+			"update",
+			[]string{
+				"Normal ResizeBlockedByPDBViolation Pod not rescheduled for resizing resources due to disruption budget",
+			},
+		},
+		{
+			"Test ResizeActionReschedule",
+			string(schedulerapi.ResizeActionReschedule),
+			"",
+			"",
+			"delete",
+			[]string{
+				"Normal ResizeActionReschedule Deleting pod to reschedule with resized resources",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		newPod.Annotations[schedulerapi.AnnotationResizeResourcesActionVer] = actionVer
+		newPod.Annotations[schedulerapi.AnnotationResizeResourcesAction] = tt.PodResizeAction
+
+		fakeCf.processPodResizeAction(oldPod, newPod, tt.PodResizeAction)
+
+		if newPod.Annotations[schedulerapi.AnnotationResizeResourcesActionVer] != tt.ExpectedResizeActionVer {
+			t.Fatalf("Testcase '%s' - resize action version mismatch. Expected: '%s'. Actual: '%s'\n",
+					tt.TestCaseDesc, tt.ExpectedResizeActionVer, newPod.Annotations[schedulerapi.AnnotationResizeResourcesActionVer])
+		}
+		if newPod.Annotations[schedulerapi.AnnotationResizeResourcesAction] != tt.ExpectedResizeAction {
+			t.Fatalf("Testcase '%s' - resize action mismatch. Expected: '%s'. Actual: '%s'\n",
+					tt.TestCaseDesc, tt.ExpectedResizeAction, newPod.Annotations[schedulerapi.AnnotationResizeResourcesAction])
+		}
+
+		events := collectEvents(fakeRecorder.Events)
+		if len(events) != len(tt.ExpectedPodEvents) {
+			t.Fatalf("Testcase '%s' - event count mismatch. Expected: %d. Actual: %d\n", tt.TestCaseDesc, len(tt.ExpectedPodEvents), len(events))
+		}
+		for i, event := range events {
+			if event != tt.ExpectedPodEvents[i] {
+				t.Fatalf("Testcase '%s' - event mismatch.\nExpected: '%s'.\nActual:   '%s'\n", tt.TestCaseDesc, tt.ExpectedPodEvents[i], event)
+			}
+		}
+
+		actions := fakeClientset.Actions()
+		if len(actions) != 1 {
+			t.Fatalf("Testcase '%s' - pod action count mismatch. Expected: 1. Actual: %d\n", tt.TestCaseDesc, len(actions))
+		}
+		if actions[0].GetResource().Resource != "pods" {
+			t.Fatalf("Testcase '%s' - pod action resource mismatch. Expected: 'pods'. Actual: '%s'\n", tt.TestCaseDesc, actions[0].GetResource().Resource)
+		}
+		if actions[0].GetVerb() != tt.ExpectedPodAction {
+			t.Fatalf("Testcase '%s' - pod action mismatch. Expected: '%s'. Actual: '%s'\n", tt.TestCaseDesc, tt.ExpectedPodAction, actions[0].GetVerb())
+		}
+		fakeClientset.ClearActions()
+	}
+}
+
+func collectEvents(source <-chan string) []string {
+        done := false
+        events := make([]string, 0)
+        for !done {
+                select {
+                case event := <-source:
+                        events = append(events, event)
+                default:
+                        done = true
+                }
+        }
+        return events
+}
+
 func newConfigFactory(client *clientset.Clientset, hardPodAffinitySymmetricWeight int32) scheduler.Configurator {
 	informerFactory := informers.NewSharedInformerFactory(client, 0)
 	return NewConfigFactory(
@@ -534,6 +673,7 @@ func newConfigFactory(client *clientset.Clientset, hardPodAffinitySymmetricWeigh
 		informerFactory.Core().V1().Services(),
 		informerFactory.Policy().V1beta1().PodDisruptionBudgets(),
 		informerFactory.Storage().V1().StorageClasses(),
+		&record.FakeRecorder{},
 		hardPodAffinitySymmetricWeight,
 		enableEquivalenceCache,
 		disablePodPreemption,

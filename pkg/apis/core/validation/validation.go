@@ -45,6 +45,7 @@ import (
 	apiservice "k8s.io/kubernetes/pkg/api/service"
 	"k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/core/helper"
+	"k8s.io/kubernetes/pkg/apis/core/helper/qos"
 	podshelper "k8s.io/kubernetes/pkg/apis/core/pods"
 	corev1 "k8s.io/kubernetes/pkg/apis/core/v1"
 	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
@@ -3473,12 +3474,22 @@ func ValidatePodUpdate(newPod, oldPod *core.Pod) field.ErrorList {
 		allErrs = append(allErrs, field.Invalid(specPath.Child("activeDeadlineSeconds"), newPod.Spec.ActiveDeadlineSeconds, "must not update from a positive integer to nil value"))
 	}
 
+	// check for QOS change
+	newQOS := qos.GetPodQOS(newPod)
+	oldQOS := qos.GetPodQOS(oldPod)
+	if newQOS != oldQOS {
+		allErrs = append(allErrs, field.Invalid(fldPath, newQOS, "Pod QOS is immutable"))
+	}
+
 	// handle updateable fields by munging those fields prior to deep equal comparison.
 	mungedPod := *newPod
 	// munge spec.containers[*].image
 	var newContainers []core.Container
 	for ix, container := range mungedPod.Spec.Containers {
 		container.Image = oldPod.Spec.Containers[ix].Image
+		if utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) {
+			container.Resources = oldPod.Spec.Containers[ix].Resources
+		}
 		newContainers = append(newContainers, container)
 	}
 	mungedPod.Spec.Containers = newContainers

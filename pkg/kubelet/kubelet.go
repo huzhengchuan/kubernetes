@@ -99,6 +99,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/util/sliceutils"
 	"k8s.io/kubernetes/pkg/kubelet/volumemanager"
 	"k8s.io/kubernetes/pkg/scheduler/algorithm/predicates"
+	schedulerapi "k8s.io/kubernetes/pkg/scheduler/api"
 	"k8s.io/kubernetes/pkg/security/apparmor"
 	sysctlwhitelist "k8s.io/kubernetes/pkg/security/podsecuritypolicy/sysctl"
 	utildbus "k8s.io/kubernetes/pkg/util/dbus"
@@ -1564,9 +1565,24 @@ func (kl *Kubelet) syncPod(o syncPodOptions) error {
 				if err := kl.containerManager.UpdateQOSCgroups(); err != nil {
 					glog.V(2).Infof("Failed to update QoS cgroups while syncing pod: %v", err)
 				}
+				if !utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) {
+					// create or update cgroup settings based on pod resource spec
+					if err := pcm.EnsureExists(pod); err != nil {
+						kl.recorder.Eventf(pod, v1.EventTypeWarning, events.FailedToCreatePodContainer, "unable to ensure pod container exists: %v", err)
+						return fmt.Errorf("failed to ensure that the pod: %v cgroups exist and are correctly applied: %v", pod.UID, err)
+					}
+
+				}
+			}
+
+			if utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) {
+				// create or update cgroup settings based on pod resource spec
 				if err := pcm.EnsureExists(pod); err != nil {
 					kl.recorder.Eventf(pod, v1.EventTypeWarning, events.FailedToCreatePodContainer, "unable to ensure pod container exists: %v", err)
 					return fmt.Errorf("failed to ensure that the pod: %v cgroups exist and are correctly applied: %v", pod.UID, err)
+				}
+				if err := kl.containerManager.UpdateQOSCgroups(); err != nil {
+					glog.V(2).Infof("Failed to update QoS cgroups while syncing pod: %v", err)
 				}
 			}
 		}
@@ -2005,7 +2021,108 @@ func (kl *Kubelet) HandlePodAdditions(pods []*v1.Pod) {
 		mirrorPod, _ := kl.podManager.GetMirrorPodByPod(pod)
 		kl.dispatchWork(pod, kubetypes.SyncPodCreate, mirrorPod, start)
 		kl.probeManager.AddPod(pod)
+
+		// Handle resources resize request if one is in progress
+		if utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) && pod.DeletionTimestamp == nil {
+			if _, ok := pod.Annotations[schedulerapi.AnnotationResizeResourcesAction]; ok {
+				glog.V(2).Infof("A resource update is in progress for pod %s.", pod.Name)
+				if kl.isPodResourceUpdateAcceptable(pod) {
+					kl.podManager.UpdatePod(pod)
+				}
+			}
+		}
 	}
+}
+
+// True if the pod contains resources update request, and the new request fits in the node
+func (kl *Kubelet) isPodResourceUpdateAcceptable(pod *v1.Pod) bool {
+	var otherActivePods []*v1.Pod
+	isAcceptable := true
+
+	if resizeActionAnnotation, ok := pod.Annotations[schedulerapi.AnnotationResizeResourcesAction]; ok {
+		var conditionStatus v1.ConditionStatus
+		var reason string
+
+		switch schedulerapi.PodResourcesResizeAction(resizeActionAnnotation) {
+		case schedulerapi.ResizeActionNonePerPolicy:
+			// Scheduler determined that pod reschedule for resizing was blocked by policy, just update pod status and bugout
+			glog.V(4).Infof("Pod '%s' reschedule to resize resources blocked by policy at scheduler. Updating status.", pod.Name)
+			conditionStatus = v1.ConditionFalse
+			reason = schedulerapi.PodResourcesResizeStatusBlockedByPolicy + ":scheduler"
+			isAcceptable = false
+		case schedulerapi.ResizeActionNonePerPDBViolation:
+			// Scheduler determined that pod reschedule for resizing was blocked due to PDB violation, just update pod status and bugout
+			glog.V(4).Infof("Pod '%s' reschedule to resize resources blocked by scheduler due to disruption budget violation. Updating status.", pod.Name)
+			conditionStatus = v1.ConditionFalse
+			reason = schedulerapi.PodResourcesResizeStatusBlockedByPDBViolation + ":scheduler"
+			isAcceptable = false
+		case schedulerapi.ResizeActionUpdate:
+			// Pod needs resource update, check for fit
+			activePods := kl.GetActivePods()
+			for _, p := range activePods {
+				if p.UID != pod.UID {
+					otherActivePods = append(otherActivePods, p)
+				}
+			}
+
+			if ok, failReason, failMessage := kl.canAdmitPod(otherActivePods, pod); !ok {
+				glog.Warningf("Pod '%s' resource update admit failed. Reason: '%s' Error: '%s'", pod.Name, failReason, failMessage)
+				resizeResourcesPolicy := schedulerapi.ResizePolicyInPlacePreferred
+				if _, ok := pod.Annotations[schedulerapi.AnnotationResizeResourcesPolicy]; ok {
+					resizeResourcesPolicy = schedulerapi.PodResourcesResizePolicy(pod.Annotations[schedulerapi.AnnotationResizeResourcesPolicy])
+				}
+				if resizeResourcesPolicy == schedulerapi.ResizePolicyInPlaceOnly {
+					// Pod reschedule for resizing blocked by policy
+					kl.recorder.Eventf(pod, v1.EventTypeWarning, events.FailedToResizePodResources, "Failed to update pod resources: %s", failReason)
+					conditionStatus = v1.ConditionFalse
+					reason = schedulerapi.PodResourcesResizeStatusBlockedByPolicy + ":" + failReason
+					isAcceptable = false
+				} else {
+					// Kill the pod to allow scheduling replacement with updated resources
+					podName := pod.Name
+					kl.recorder.Eventf(pod, v1.EventTypeNormal, "ResizeActionReschedule", "Deleting pod to reschedule with resized resources")
+					deleteOptions := metav1.NewDeleteOptions(0)
+					deleteOptions.Preconditions = metav1.NewUIDPreconditions(string(pod.UID))
+					if err := kl.kubeClient.CoreV1().Pods(pod.Namespace).Delete(podName, deleteOptions); err != nil {
+						glog.Errorf("Error deleting pod '%s' for resizing resources: %v", podName, err)
+						kl.recorder.Eventf(pod, v1.EventTypeWarning, events.FailedToKillPod, "Pod resize delete error: %v", err)
+						syncErr := fmt.Errorf("Error killing pod for resources resizing: %v", err)
+						utilruntime.HandleError(syncErr)
+					} else {
+						glog.V(4).Infof("Pod '%s' deleted to reschedule with resized resources.", podName)
+					}
+					return false
+				}
+			} else {
+				// ResizeSuccessful
+				conditionStatus = v1.ConditionTrue
+				reason = schedulerapi.PodResourcesResizeStatusSuccessful + ":" + "kubelet can accept pod resources resize request"
+			}
+		}
+
+		// Update pod status
+		resizeStatus := v1.PodCondition{
+			Type:               v1.PodResourcesResizeStatus,
+			Status:             conditionStatus,
+			Reason:             reason,
+			Message:            pod.Annotations[schedulerapi.AnnotationResizeResourcesActionVer],
+			LastTransitionTime: metav1.Now(),
+			LastProbeTime:      metav1.Now(),
+		}
+		idx := -1
+		for i, podCondition := range pod.Status.Conditions {
+			if podCondition.Type == v1.PodResourcesResizeStatus {
+				pod.Status.Conditions[i] = resizeStatus
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			pod.Status.Conditions = append(pod.Status.Conditions, resizeStatus)
+		}
+		kl.statusManager.UpdatePodStatus(pod, pod.Status, true)
+	}
+	return isAcceptable
 }
 
 // HandlePodUpdates is the callback in the SyncHandler interface for pods
@@ -2013,6 +2130,14 @@ func (kl *Kubelet) HandlePodAdditions(pods []*v1.Pod) {
 func (kl *Kubelet) HandlePodUpdates(pods []*v1.Pod) {
 	start := kl.clock.Now()
 	for _, pod := range pods {
+		// For non-delete pod updates, check that resource update, if any, is acceptable
+		if utilfeature.DefaultFeatureGate.Enabled(features.VerticalScaling) {
+			// TODO: We may need to do this from HandlePodAdditions as well - investigate kubelet offline case.
+			if pod.DeletionTimestamp == nil && !kl.isPodResourceUpdateAcceptable(pod) {
+				continue
+			}
+		}
+
 		kl.podManager.UpdatePod(pod)
 		if kubepod.IsMirrorPod(pod) {
 			kl.handleMirrorPod(pod, start)

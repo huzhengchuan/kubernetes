@@ -57,6 +57,7 @@ func TestStableKey(t *testing.T) {
 }
 
 func TestToKubeContainer(t *testing.T) {
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, true)
 	c := &runtimeapi.Container{
 		Id: "test-id",
 		Metadata: &runtimeapi.ContainerMetadata{
@@ -67,7 +68,8 @@ func TestToKubeContainer(t *testing.T) {
 		ImageRef: "test-image-ref",
 		State:    runtimeapi.ContainerState_CONTAINER_RUNNING,
 		Annotations: map[string]string{
-			containerHashLabel: "1234",
+			containerHashLabel:              "1234",
+			containerHashZeroResourcesLabel: "5678",
 		},
 	}
 	expect := &kubecontainer.Container{
@@ -75,11 +77,12 @@ func TestToKubeContainer(t *testing.T) {
 			Type: runtimetesting.FakeRuntimeName,
 			ID:   "test-id",
 		},
-		Name:    "test-name",
-		ImageID: "test-image-ref",
-		Image:   "test-image",
-		Hash:    uint64(0x1234),
-		State:   kubecontainer.ContainerStateRunning,
+		Name:              "test-name",
+		ImageID:           "test-image-ref",
+		Image:             "test-image",
+		Hash:              uint64(0x1234),
+		HashZeroResources: uint64(0x5678),
+		State:             kubecontainer.ContainerStateRunning,
 	}
 
 	_, _, m, err := createTestRuntimeManager()

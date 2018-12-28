@@ -22,6 +22,7 @@ const (
 	StartedContainer        = "Started"
 	FailedToCreateContainer = "Failed"
 	FailedToStartContainer  = "Failed"
+	UpdatedContainer        = "UpdatedResource"
 	KillingContainer        = "Killing"
 	PreemptContainer        = "Preempting"
 	BackOffStartContainer   = "BackOff"
@@ -30,6 +31,7 @@ const (
 	// Pod event reason list
 	FailedToKillPod                = "FailedKillPod"
 	FailedToCreatePodContainer     = "FailedCreatePodContainer"
+	FailedToResizePodResources     = "FailedPodResourceResize"
 	FailedToMakePodDataDirectories = "Failed"
 	NetworkNotReady                = "NetworkNotReady"
 

@@ -30,12 +30,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/admission"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	utilfeaturetesting "k8s.io/apiserver/pkg/util/feature/testing"
 	testcore "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
 	informers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion"
 	"k8s.io/kubernetes/pkg/controller"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/quota/generic"
 	"k8s.io/kubernetes/pkg/quota/install"
 	resourcequotaapi "k8s.io/kubernetes/plugin/pkg/admission/resourcequota/apis/resourcequota"
@@ -61,7 +63,7 @@ func getResourceRequirements(requests, limits api.ResourceList) api.ResourceRequ
 
 func validPod(name string, numContainers int, resources api.ResourceRequirements) *api.Pod {
 	pod := &api.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test", ResourceVersion: "10"},
 		Spec:       api.PodSpec{},
 	}
 	pod.Spec.Containers = make([]api.Container, 0, numContainers)
@@ -197,8 +199,7 @@ func TestAdmissionIgnoresSubresources(t *testing.T) {
 	}
 }
 
-// TestAdmitBelowQuotaLimit verifies that a pod when created has its usage reflected on the quota
-func TestAdmitBelowQuotaLimit(t *testing.T) {
+func SetupQuotaforCreateAndUpdate(usedCPU string, usedMemory string, stopCh chan struct{}, usedPods int) (*fake.Clientset, *QuotaAdmission) {
 	resourceQuota := &api.ResourceQuota{
 		ObjectMeta: metav1.ObjectMeta{Name: "quota", Namespace: "test", ResourceVersion: "124"},
 		Status: api.ResourceQuotaStatus{
@@ -208,14 +209,12 @@ func TestAdmitBelowQuotaLimit(t *testing.T) {
 				api.ResourcePods:   resource.MustParse("5"),
 			},
 			Used: api.ResourceList{
-				api.ResourceCPU:    resource.MustParse("1"),
-				api.ResourceMemory: resource.MustParse("50Gi"),
-				api.ResourcePods:   resource.MustParse("3"),
+				api.ResourceCPU:    resource.MustParse(usedCPU),
+				api.ResourceMemory: resource.MustParse(usedMemory),
+				api.ResourcePods:   resource.MustParse(strconv.Itoa(usedPods)),
 			},
 		},
 	}
-	stopCh := make(chan struct{})
-	defer close(stopCh)
 
 	kubeClient := fake.NewSimpleClientset(resourceQuota)
 	informerFactory := informers.NewSharedInformerFactory(kubeClient, controller.NoResyncPeriodFunc())
@@ -231,6 +230,133 @@ func TestAdmitBelowQuotaLimit(t *testing.T) {
 		evaluator: evaluator,
 	}
 	informerFactory.Core().InternalVersion().ResourceQuotas().Informer().GetIndexer().Add(resourceQuota)
+
+	return kubeClient, handler
+}
+
+func TestAdmitBelowQuotaLimitWithDecreasingResourceUpdate(t *testing.T) {
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, true)
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+	kubeClient, handler := SetupQuotaforCreateAndUpdate("1", "50Gi", stopCh, 3)
+	oldPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("200m", "10Gi"), getResourceList("", "")))
+	err := handler.Validate(admission.NewAttributesRecord(oldPod, nil, api.Kind("Pod").WithVersion("version"), oldPod.Namespace, oldPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Create, nil))
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	kubeClient, handler = SetupQuotaforCreateAndUpdate("1200m", "60Gi", stopCh, 4)
+	newPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("100m", "2Gi"), getResourceList("", "")))
+	newPod.ResourceVersion = "11"
+	err = handler.Validate(admission.NewAttributesRecord(newPod, oldPod, api.Kind("Pod").WithVersion("version"), newPod.Namespace, newPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Update, nil))
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	decimatedActions := removeListWatch(kubeClient.Actions())
+	lastActionIndex := len(decimatedActions) - 1
+	usage := decimatedActions[lastActionIndex].(testcore.UpdateAction).GetObject().(*api.ResourceQuota)
+	expectedUsage := api.ResourceQuota{
+		Status: api.ResourceQuotaStatus{
+			Hard: api.ResourceList{
+				api.ResourceCPU:    resource.MustParse("3"),
+				api.ResourceMemory: resource.MustParse("100Gi"),
+				api.ResourcePods:   resource.MustParse("5"),
+			},
+			Used: api.ResourceList{
+				api.ResourceCPU:    resource.MustParse("1100m"),
+				api.ResourceMemory: resource.MustParse("52Gi"),
+				api.ResourcePods:   resource.MustParse("4"),
+			},
+		},
+	}
+	for k, v := range expectedUsage.Status.Used {
+		actual := usage.Status.Used[k]
+		actualValue := actual.String()
+		expectedValue := v.String()
+		if expectedValue != actualValue {
+			t.Errorf("Usage Used: Key: %v, Expected: %v, Actual: %v", k, expectedValue, actualValue)
+		}
+	}
+}
+
+func TestAdmitBelowQuotaLimitWithIncreasingResourceUpdate(t *testing.T) {
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, true)
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+	kubeClient, handler := SetupQuotaforCreateAndUpdate("1", "50Gi", stopCh, 3)
+	oldPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("100m", "2Gi"), getResourceList("", "")))
+	oldPod.ResourceVersion = "10"
+	err := handler.Validate(admission.NewAttributesRecord(oldPod, nil, api.Kind("Pod").WithVersion("version"), oldPod.Namespace, oldPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Create, nil))
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	// update the usage to account for the first update
+	kubeClient, handler = SetupQuotaforCreateAndUpdate("1100m", "52Gi", stopCh, 4)
+
+	newPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("200m", "10Gi"), getResourceList("", "")))
+	newPod.ResourceVersion = "11"
+	err = handler.Validate(admission.NewAttributesRecord(newPod, oldPod, api.Kind("Pod").WithVersion("version"), newPod.Namespace, newPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Update, nil))
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	decimatedActions := removeListWatch(kubeClient.Actions())
+	lastActionIndex := len(decimatedActions) - 1
+	usage := decimatedActions[lastActionIndex].(testcore.UpdateAction).GetObject().(*api.ResourceQuota)
+	expectedUsage := api.ResourceQuota{
+		Status: api.ResourceQuotaStatus{
+			Hard: api.ResourceList{
+				api.ResourceCPU:    resource.MustParse("3"),
+				api.ResourceMemory: resource.MustParse("100Gi"),
+				api.ResourcePods:   resource.MustParse("5"),
+			},
+			Used: api.ResourceList{
+				api.ResourceCPU:    resource.MustParse("1200m"),
+				api.ResourceMemory: resource.MustParse("60Gi"),
+				api.ResourcePods:   resource.MustParse("4"),
+			},
+		},
+	}
+	for k, v := range expectedUsage.Status.Used {
+		actual := usage.Status.Used[k]
+		actualValue := actual.String()
+		expectedValue := v.String()
+		if expectedValue != actualValue {
+			t.Errorf("Usage Used: Key: %v, Expected: %v, Actual: %v", k, expectedValue, actualValue)
+		}
+	}
+}
+
+func TestAdmitExceedsQuotaLimitWithUpdate(t *testing.T) {
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, true)
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+	_, handler := SetupQuotaforCreateAndUpdate("1", "50Gi", stopCh, 3)
+	oldPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("100m", "2Gi"), getResourceList("", "")))
+	err := handler.Validate(admission.NewAttributesRecord(oldPod, nil, api.Kind("Pod").WithVersion("version"), oldPod.Namespace, oldPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Create, nil))
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	// update the usage to account for the first update
+	_, handler = SetupQuotaforCreateAndUpdate("1100m", "52Gi", stopCh, 4)
+
+	newPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("200m", "100Gi"), getResourceList("", "")))
+	expectedErr := "pods \"allowed-pod\" is forbidden: exceeded quota: quota, requested: memory=98Gi, used: memory=52Gi, limited: memory=100Gi"
+	err = handler.Validate(admission.NewAttributesRecord(newPod, oldPod, api.Kind("Pod").WithVersion("version"), newPod.Namespace, newPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Update, nil))
+	if err == nil || err.Error() != expectedErr {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+}
+
+// TestAdmitBelowQuotaLimit verifies that a pod when created has its usage reflected on the quota
+func TestAdmitBelowQuotaLimit(t *testing.T) {
+	utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VerticalScaling, false)
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+	kubeClient, handler := SetupQuotaforCreateAndUpdate("1", "50Gi", stopCh, 3)
 	newPod := validPod("allowed-pod", 1, getResourceRequirements(getResourceList("100m", "2Gi"), getResourceList("", "")))
 	err := handler.Validate(admission.NewAttributesRecord(newPod, nil, api.Kind("Pod").WithVersion("version"), newPod.Namespace, newPod.Name, api.Resource("pods").WithVersion("version"), "", admission.Create, nil))
 	if err != nil {
